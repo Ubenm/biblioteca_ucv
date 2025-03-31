@@ -2,6 +2,8 @@ from flask import Flask, request, jsonify, render_template, send_from_directory
 import mysql.connector
 import os
 import datetime
+from werkzeug.utils import secure_filename
+import traceback  # Añadir al inicio del archivo
 
 app = Flask(__name__)
 UPLOAD_FOLDER = "uploads"
@@ -55,6 +57,7 @@ def startup():
 
 # ------------------- Gestión de Reuniones -------------------
 # Endpoint GET para listar reuniones (NUEVO)
+
 @app.route('/meetings', methods=['GET'])
 def get_meetings():
     conn = get_db_connection()
@@ -98,46 +101,62 @@ def create_meeting():
 # ------------------- Carga de Documentos -------------------
 @app.route('/upload', methods=['POST'])
 def upload_document():
-    # Validar meeting_id
-    meeting_id = request.form.get("meeting_id")
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # Verificar existencia de la reunión
-    cursor.execute("SELECT id FROM meetings WHERE id = %s", (meeting_id,))
-    if not cursor.fetchone():
+    try:
+        # Validar campos requeridos
+        meeting_id = request.form.get("meeting_id")
+        tipo = request.form.get("tipo")
+        file = request.files.get("document")
+
+        if not all([meeting_id, tipo, file]):
+            return jsonify({"error": "Faltan campos requeridos"}), 400
+
+        # Validar reunión
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM meetings WHERE id = %s", (meeting_id,))
+        if not cursor.fetchone():
+            return jsonify({"error": "ID de reunión inválido"}), 400
+
+        # Validar documento padre
+        parent_id = request.form.get("parent_id")
+        if parent_id:
+            cursor.execute("SELECT id FROM documents WHERE id = %s AND meeting_id = %s", (parent_id, meeting_id))
+            if not cursor.fetchone():
+                return jsonify({"error": "Documento principal no válido"}), 400
+
+        # Guardar archivo
+        filename = secure_filename(file.filename)  # Usar secure_filename
+        unique_name = f"{datetime.datetime.now().timestamp()}_{filename}"
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_name)
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        file.save(filepath)
+
+        # Insertar en BD
+        cursor.execute("""
+            INSERT INTO documents 
+            (meeting_id, tipo, nombre, ruta, fecha_subida, parent_id)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (
+            meeting_id,
+            tipo,
+            filename,  # Guardar nombre original seguro
+            filepath,
+            datetime.datetime.now(),
+            parent_id if parent_id else None
+        ))
+        conn.commit()
+
+        return jsonify({
+            "message": "Documento subido",
+            "document_id": cursor.lastrowid,
+            "filename": filename
+        }), 201
+
+    except Exception as e:
+        return jsonify({"error": f"Error interno: {str(e)}"}), 500
+    finally:
         cursor.close()
         conn.close()
-        return jsonify({"error": "ID de reunión no existe"}), 400
-    
-    # Validar documento principal (si aplica)
-    parent_id = request.form.get("parent_id")
-    if parent_id:
-        cursor.execute("SELECT id FROM documents WHERE id = %s AND meeting_id = %s", (parent_id, meeting_id))
-        if not cursor.fetchone():
-            cursor.close()
-            conn.close()
-            return jsonify({"error": "Documento principal no existe en esta reunión"}), 400
-    
-    # Guardar archivo
-    file = request.files['document']
-    filename = f"{datetime.datetime.now().timestamp()}_{file.filename}"
-    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-    os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-    file.save(filepath)
-    
-    # Insertar en base de datos
-    cursor.execute(
-        """INSERT INTO documents (meeting_id, tipo, nombre, ruta, fecha_subida, parent_id)
-           VALUES (%s, %s, %s, %s, %s, %s)""",
-        (meeting_id, request.form['tipo'], file.filename, filepath, datetime.datetime.now(), parent_id)
-    )
-    conn.commit()
-    doc_id = cursor.lastrowid
-    cursor.close()
-    conn.close()
-    return jsonify({"message": "Documento subido", "document_id": doc_id}), 201
-
 # ------------------- Índice de Reuniones -------------------
 @app.route('/meetings/<int:meeting_id>/index')
 def meeting_index(meeting_id):
@@ -172,35 +191,51 @@ def search_documents():
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     
-    query = '''
-        SELECT d.*, m.fecha, m.tema 
-        FROM documents d
-        JOIN meetings m ON d.meeting_id = m.id
-        WHERE 1=1
-    '''
-    filters = []
-    values = []
-    
-    if 'keyword' in params:
-        filters.append("(d.nombre LIKE %s OR m.tema LIKE %s)")
-        values.extend([f"%{params['keyword']}%"]*2)
-    
-    if 'tipo' in params:
-        filters.append("d.tipo = %s")
-        values.append(params['tipo'])
-    
-    if 'fecha' in params:
-        filters.append("DATE(m.fecha) = %s")
-        values.append(params['fecha'])
-    
-    if filters:
-        query += " AND " + " AND ".join(filters)
-    
-    cursor.execute(query, values)
-    results = cursor.fetchall()
-    cursor.close()
-    conn.close()
-    return jsonify(results)
+    try:
+        query = '''
+            SELECT d.*, m.fecha, m.tema 
+            FROM documents d
+            JOIN meetings m ON d.meeting_id = m.id
+            WHERE 1=1
+        '''
+        filters = []
+        values = []
+        
+        # Filtro por palabra clave (solo si no está vacío)
+        keyword = params.get('keyword', '').strip()
+        if keyword:
+            filters.append("(d.nombre LIKE %s OR m.tema LIKE %s OR m.participantes LIKE %s)")
+            values.extend([f"%{keyword}%"] * 3)
+        
+        # Filtro por tipo (solo si se selecciona)
+        tipo = params.get('tipo', '')
+        if tipo:
+            filters.append("d.tipo = %s")
+            values.append(tipo)
+        
+        # Filtro por fecha (solo si es válida)
+        fecha = params.get('fecha', '')
+        if fecha:
+            try:
+                datetime.datetime.strptime(fecha, "%Y-%m-%d")
+                filters.append("DATE(m.fecha) = %s")
+                values.append(fecha)
+            except ValueError:
+                return jsonify({"error": "Formato de fecha inválido. Use YYYY-MM-DD"}), 400
+        
+        # Construir consulta final
+        if filters:
+            query += " AND " + " AND ".join(filters)
+        
+        cursor.execute(query, values)
+        results = cursor.fetchall()
+        return jsonify(results), 200
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
 
 # ------------------- Descarga/Visualización -------------------
 @app.route('/documents/<int:doc_id>')
