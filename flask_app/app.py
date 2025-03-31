@@ -102,32 +102,52 @@ def create_meeting():
 @app.route('/upload', methods=['POST'])
 def upload_document():
     try:
-        # Validar campos requeridos
         meeting_id = request.form.get("meeting_id")
         tipo = request.form.get("tipo")
         file = request.files.get("document")
+        parent_id = request.form.get("parent_id") or None  # Convertir vacío a None
 
+        # Validar campos requeridos
         if not all([meeting_id, tipo, file]):
-            return jsonify({"error": "Faltan campos requeridos"}), 400
+            return jsonify({"error": "Faltan: meeting_id, tipo, archivo"}), 400
 
-        # Validar reunión
         conn = get_db_connection()
         cursor = conn.cursor()
+
+        # Validar que la reunión existe
         cursor.execute("SELECT id FROM meetings WHERE id = %s", (meeting_id,))
         if not cursor.fetchone():
             return jsonify({"error": "ID de reunión inválido"}), 400
-
-        # Validar documento padre
-        parent_id = request.form.get("parent_id")
+        
+        parent_id = request.form.get("parent_id") or None
+        
         if parent_id:
-            cursor.execute("SELECT id FROM documents WHERE id = %s AND meeting_id = %s", (parent_id, meeting_id))
+            try:
+                parent_id = int(parent_id)
+                # Validar que el documento padre existe y pertenece a la reunión
+                cursor.execute('''
+                    SELECT id FROM documents 
+                    WHERE id = %s 
+                    AND meeting_id = %s 
+                    AND parent_id IS NULL
+                ''', (parent_id, meeting_id))
+                if not cursor.fetchone():
+                    return jsonify({"error": "Documento principal inválido"}), 400
+            except ValueError:
+                return jsonify({"error": "ID de documento principal inválido"}), 400
+
+        # Si hay parent_id, validar que existe
+        if parent_id:
+            cursor.execute("""
+                SELECT id FROM documents 
+                WHERE id = %s AND meeting_id = %s
+            """, (parent_id, meeting_id))
             if not cursor.fetchone():
-                return jsonify({"error": "Documento principal no válido"}), 400
+                return jsonify({"error": "Documento principal no existe"}), 400
 
         # Guardar archivo
-        filename = secure_filename(file.filename)  # Usar secure_filename
-        unique_name = f"{datetime.datetime.now().timestamp()}_{filename}"
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_name)
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], f"{datetime.datetime.now().timestamp()}_{filename}")
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         file.save(filepath)
 
@@ -139,25 +159,47 @@ def upload_document():
         """, (
             meeting_id,
             tipo,
-            filename,  # Guardar nombre original seguro
+            filename,
             filepath,
             datetime.datetime.now(),
-            parent_id if parent_id else None
+            parent_id
         ))
         conn.commit()
 
         return jsonify({
             "message": "Documento subido",
-            "document_id": cursor.lastrowid,
-            "filename": filename
+            "document_id": cursor.lastrowid
         }), 201
 
     except Exception as e:
-        return jsonify({"error": f"Error interno: {str(e)}"}), 500
+        return jsonify({"error": f"Error: {str(e)}"}), 500
     finally:
         cursor.close()
         conn.close()
 # ------------------- Índice de Reuniones -------------------
+# Nuevo endpoint para obtener documentos principales de una reunión
+@app.route('/meetings/<int:meeting_id>/main-documents')
+def get_main_documents(meeting_id):
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    
+    try:
+        cursor.execute('''
+            SELECT id, nombre, tipo 
+            FROM documents 
+            WHERE meeting_id = %s 
+            AND parent_id IS NULL
+        ''', (meeting_id,))
+        
+        documentos = cursor.fetchall()
+        return jsonify(documentos), 200
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
 @app.route('/meetings/<int:meeting_id>/index')
 def meeting_index(meeting_id):
     conn = get_db_connection()
