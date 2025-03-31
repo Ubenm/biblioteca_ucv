@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema de Gestión de Reuniones Académicas</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .document-card { transition: transform 0.2s; }
+        .document-card:hover { transform: translateY(-5px); }
+        .preview-container { height: 500px; border: 1px solid #ddd; }
+        #searchResults .badge { cursor: pointer; }
+    </style>
+</head>
+<body class="bg-light">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary mb-4">
+        <div class="container">
+            <a class="navbar-brand" href="#">Gestor Académico</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <!-- Sección de Creación de Reunión -->
+        <div class="card mb-4">
+            <div class="card-header">Nueva Reunión</div>
+            <div class="card-body">
+                <form id="createMeetingForm">
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label class="form-label">Fecha y Hora</label>
+                            <input type="datetime-local" class="form-control" name="fecha" required>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Tema</label>
+                            <input type="text" class="form-control" name="tema" placeholder="Tema de la reunión" required>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Participantes</label>
+                            <textarea class="form-control" name="participantes" placeholder="Separados por comas" required></textarea>
+                        </div>
+                        <div class="col-12">
+                            <button type="submit" class="btn btn-primary">Crear Reunión</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Sección de Subida de Documentos -->
+        <div class="card mb-4">
+            <div class="card-header">Subir Documento</div>
+            <div class="card-body">
+                <form id="uploadDocumentForm" enctype="multipart/form-data">
+                    <div class="row g-3">
+                        <div class="col-md-3">
+                            <label class="form-label">ID de Reunión</label>
+                            <input type="number" class="form-control" name="meeting_id" required>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Tipo de Documento</label>
+                            <select class="form-select" name="tipo" required>
+                                <option value="acta">Acta</option>
+                                <option value="minuta">Minuta</option>
+                                <option value="anexo">Anexo</option>
+                                <option value="otro">Otro</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Documento Principal (opcional)</label>
+                            <input type="number" class="form-control" name="parent_id" placeholder="ID documento principal">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Archivo</label>
+                            <input type="file" class="form-control" name="document" required>
+                        </div>
+                        <div class="col-12">
+                            <button type="submit" class="btn btn-success">Subir Documento</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Búsqueda Avanzada -->
+        <div class="card mb-4">
+            <div class="card-header">Búsqueda de Documentos</div>
+            <div class="card-body">
+                <form id="searchForm">
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <input type="text" class="form-control" name="keyword" placeholder="Palabra clave">
+                        </div>
+                        <div class="col-md-3">
+                            <select class="form-select" name="tipo">
+                                <option value="">Todos los tipos</option>
+                                <option value="acta">Acta</option>
+                                <option value="minuta">Minuta</option>
+                                <option value="anexo">Anexo</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <input type="date" class="form-control" name="fecha">
+                        </div>
+                        <div class="col-md-2">
+                            <button type="submit" class="btn btn-info w-100">Buscar</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Resultados y Visualización -->
+        <div class="row">
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">Últimas Reuniones</div>
+                    <div class="card-body" id="meetingsList" style="max-height: 600px; overflow-y: auto;">
+                        <!-- Listado dinámico -->
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header">Documentos</div>
+                    <div class="card-body">
+                        <div id="searchResults" class="row g-3"></div>
+                        <div class="preview-container mt-4 p-3 bg-white rounded" id="previewArea">
+                            Seleccione un documento para previsualizar
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    <script>
+        // Función para cargar reuniones
+        const loadMeetings = async () => {
+            const response = await fetch('/meetings');
+            const meetings = await response.json();
+            const list = meetings.map(meeting => `
+                <div class="card mb-2 document-card">
+                    <div class="card-body">
+                        <h6>${new Date(meeting.fecha).toLocaleString()}</h6>
+                        <p class="mb-1">${meeting.tema}</p>
+                        <button onclick="loadMeetingIndex(${meeting.id})" class="btn btn-sm btn-outline-primary">
+                            Ver documentos (${meeting.document_count || 0})
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+            document.getElementById('meetingsList').innerHTML = list;
+        };
+
+        // Cargar reuniones al iniciar
+        loadMeetings();
+
+        // Formulario de creación de reunión
+        document.getElementById('createMeetingForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const data = {
+                fecha: formData.get('fecha').replace('T', ' '),
+                tema: formData.get('tema'),
+                participantes: formData.get('participantes')
+            };
+
+            try {
+                const response = await fetch('/meetings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                await loadMeetings();
+                e.target.reset();
+            } catch (error) {
+                console.error(error);
+            }
+        });
+
+        // Formulario de subida de documentos
+        document.getElementById('uploadDocumentForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+                if(response.ok) {
+                    alert(`Documento subido con ID: ${result.document_id}`);
+                    e.target.reset();
+                } else {
+                    alert(`Error: ${result.error}`);
+                }
+            } catch (error) {
+                console.error(error);
+            }
+        });
+
+        // Búsqueda de documentos
+        document.getElementById('searchForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const params = new URLSearchParams(new FormData(e.target));
+            const response = await fetch(`/search?${params}`);
+            const results = await response.json();
+            
+            const documents = results.map(doc => `
+                <div class="col-md-6">
+                    <div class="card document-card mb-3">
+                        <div class="card-body">
+                            <h5>${doc.nombre}</h5>
+                            <div class="mb-2">
+                                <span class="badge bg-primary">${doc.tipo}</span>
+                                <span class="badge bg-secondary">${new Date(doc.fecha_subida).toLocaleDateString()}</span>
+                            </div>
+                            <p class="text-muted">${doc.tema} - ${new Date(doc.fecha).toLocaleDateString()}</p>
+                            <button onclick="previewDocument(${doc.id})" class="btn btn-sm btn-success">Ver</button>
+                            <a href="/documents/${doc.id}" class="btn btn-sm btn-outline-secondary">Descargar</a>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+            
+            document.getElementById('searchResults').innerHTML = documents;
+        });
+
+        // Visualización de documentos
+        const previewDocument = async (docId) => {
+            const response = await fetch(`/documents/${docId}`);
+            const blob = await response.blob();
+            
+            if(blob.type === 'application/pdf') {
+                const pdf = await pdfjsLib.getDocument(URL.createObjectURL(blob)).promise;
+                const page = await pdf.getPage(1);
+                const viewport = page.getViewport({ scale: 1.5 });
+                
+                const canvas = document.createElement('canvas');
+                canvas.height = viewport.height;
+                canvas.width = viewport.width;
+                
+                const context = canvas.getContext('2d');
+                await page.render({ canvasContext: context, viewport }).promise;
+                
+                document.getElementById('previewArea').innerHTML = '';
+                document.getElementById('previewArea').appendChild(canvas);
+            } else if(blob.type.startsWith('text/')) {
+                const text = await blob.text();
+                document.getElementById('previewArea').innerHTML = `<pre>${text}</pre>`;
+            } else {
+                document.getElementById('previewArea').innerHTML = 'Vista previa no disponible';
+            }
+        };
+
+        // Cargar índice de documentos de una reunión
+        window.loadMeetingIndex = async (meetingId) => {
+            const response = await fetch(`/meetings/${meetingId}/index`);
+            const documents = await response.json();
+            
+            const indexContent = documents.map(doc => `
+                <div class="card mb-3">
+                    <div class="card-body">
+                        <h5>${doc.nombre} <span class="badge bg-${doc.parent_id ? 'warning' : 'success'}">${doc.parent_id ? 'Anexo' : 'Principal'}</span></h5>
+                        ${doc.anexos.length > 0 ? `
+                            <div class="ms-4 mt-2">
+                                <h6>Anexos:</h6>
+                                ${doc.anexos.map(anexo => `
+                                    <div class="card mb-2">
+                                        <div class="card-body">
+                                            <p class="mb-0">${anexo.nombre}</p>
+                                            <button onclick="previewDocument(${anexo.id})" class="btn btn-sm btn-link">Ver</button>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            `).join('');
+            
+            document.getElementById('searchResults').innerHTML = indexContent;
+        };
+    </script>
+</body>
+</html>
