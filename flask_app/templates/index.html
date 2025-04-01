@@ -46,7 +46,7 @@
             </div>
         </div>
 
-         <!-- Sección de Subida de Documentos (Modificada) -->
+         <!-- Sección de Subida de Documentos-->
          <div class="card mb-4">
             <div class="card-header">Subir Documento</div>
             <div class="card-body">
@@ -139,7 +139,7 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
     <script>
-        // ============= Modificación 1: Carga de documentos principales =============
+        // 
         document.querySelector('input[name="meeting_id"]').addEventListener('change', async function() {
             const meetingId = this.value;
             const select = document.getElementById('parentDocumentSelect');
@@ -168,7 +168,7 @@
             }
         });
 
-        // ============= Modificación 2: Listado de reuniones con conteo =============
+        // 
         const loadMeetings = async () => {
             const response = await fetch('/meetings');
             const meetings = await response.json();
@@ -183,9 +183,7 @@
                                     class="btn btn-sm btn-outline-primary">
                                 Ver documentos
                             </button>
-                            <span class="badge bg-secondary">
-                                ${meeting.document_count || 0} documentos
-                            </span>
+
                         </div>
                     </div>
                 </div>
@@ -212,12 +210,22 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(data)
                 });
-                await loadMeetings();
-                e.target.reset();
+
+                const result = await response.json(); // Obtener respuesta del servidor
+                
+                if (response.ok) {
+                    // Mostrar alerta con el ID generado
+                    alert(`Reunión creada con éxito!\nID: ${result.meeting_id}`);
+                    await loadMeetings(); // Actualizar lista
+                    e.target.reset(); // Limpiar formulario
+                } else {
+                    alert(`Error: ${result.error}`);
+                }
+
             } catch (error) {
-                console.error(error);
+                alert("Error de conexión con el servidor");
             }
-        });
+            });
 
         // Formulario de subida de documentos
         document.getElementById('uploadDocumentForm').addEventListener('submit', async (e) => {
