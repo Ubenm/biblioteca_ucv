@@ -1,6 +1,7 @@
 version: '3'
 services:
   db:
+    image: mysql:8.0  # Usar versión estable
     build: ./mysql
     container_name: mysql_container
     environment:
@@ -13,6 +14,8 @@ services:
       - ./mysql/init.sql:/docker-entrypoint-initdb.d/init.sql # Opcional para inicializar datos
     ports:
       - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping"]
     networks:
       - app_network
 
